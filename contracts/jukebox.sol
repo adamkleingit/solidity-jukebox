@@ -13,13 +13,17 @@ contract Jukebox {
     uint public currentPlayingStartedAt;
     uint public startTime;
     uint public duration;
+    uint public maxPlayerMoves;
 
     address public manager;
     address public winner;
 
-    function Jukebox(uint _duration) public {
+    uint fakeTime;
+
+    function Jukebox(uint _duration, uint _maxPlayerMoves) public {
         manager = msg.sender;
         duration = _duration;
+        maxPlayerMoves = _maxPlayerMoves;
     }
 
     modifier restricted() {
@@ -40,7 +44,7 @@ contract Jukebox {
             pictureUrl: pictureUrl,
             songUrl: songUrl
         });
-        playerMoves[msg.sender] = 2;
+        playerMoves[msg.sender] = maxPlayerMoves;
         players.push(msg.sender);
     }
 
@@ -49,25 +53,25 @@ contract Jukebox {
     }
 
     function start() public restricted {
-        startTime = now;
+        startTime = currTime();
     }
     
-    function stopTime() private view returns (uint) {
+    function stopTime() public view returns (uint) {
         return startTime + duration;
     }
     
     function canMove(address addr) public view returns (bool) {
         // current player can't move, and current player has moves left, and time is not over
-        return (currentPlaying != addr) && (playerMoves[addr] > 0) && (now < stopTime());
+        return (currentPlaying != addr) && (playerMoves[addr] > 0) && (currTime() < stopTime());
     }
 
     function move() public {
         require (canMove(msg.sender));
-        uint currentTime = now;
+        uint currentTime = currTime();
 
         // If there's an active player - stop them and fix their duration
         if (currentPlaying != address(0)) {
-            playerDurations[currentPlaying] += now - currentPlayingStartedAt;
+            playerDurations[currentPlaying] += currentTime - currentPlayingStartedAt;
         }
         playerMoves[msg.sender]--;
         currentPlaying = msg.sender;
@@ -79,15 +83,27 @@ contract Jukebox {
 
         // If currently running - add the active move duration
         if (currentPlaying == addr) {
-            result += min(now, stopTime()) - currentPlayingStartedAt;
+            result += min(currTime(), stopTime()) - currentPlayingStartedAt;
         }
 
         return result;
     }
 
+    function getCurrentPlayingPictureUrl() public view returns (string) {
+        require(currentPlaying != address(0));
+        
+        return playerInfos[currentPlaying].pictureUrl;
+    }
+
+    function getCurrentPlayingSongUrl() public view returns (string) {
+        require(currentPlaying != address(0));
+        
+        return playerInfos[currentPlaying].songUrl;
+    }
+
     function canPickWinner() public view returns (bool) {
          // game started, and haven't picked winner already, and game time ended
-        return (startTime != 0 && winner == address(0) && now >= stopTime());
+        return (startTime != 0 && winner == address(0) && currTime() >= stopTime());
     }
 
     function pickWinner() public restricted {
@@ -101,15 +117,40 @@ contract Jukebox {
         }
 
         winner = bestPlayer();
-        winner.transfer(this.balance * 9 / 10);
-        manager.transfer(this.balance);        
+        // TODO: transfer funds
+        // uint fee = this.balance / 10;
+        // winner.transfer(this.balance - fee);
+        // manager.transfer(fee);
+    }
+
+    function reset(uint _duration, uint _maxPlayerMoves, bool clearPlayers) public restricted {
+        duration = _duration;
+        maxPlayerMoves = _maxPlayerMoves;
+        for (uint i = 0; i < players.length; i++) {
+            address player = players[i];
+
+            playerDurations[player] = 0;
+            if (clearPlayers) {
+                playerInfos[player] = PlayerInfo("", "");
+                playerMoves[player] = 0;
+            } else {
+                playerMoves[player] = maxPlayerMoves;
+            }
+        }
+        if (clearPlayers) {
+            players = new address[](0);
+        }
+        winner = address(0);
+        currentPlaying = address(0);
+        currentPlayingStartedAt = 0;
+        startTime = 0;
     }
     
     function bestPlayer() private view returns (address) {
         address curWinner;
         uint result = 0;
 
-        for (uint i = 1; i < players.length; i++) {
+        for (uint i = 0; i < players.length; i++) {
             uint curDuration = playerDurations[players[i]];
 
             if (curDuration > result) {
@@ -125,6 +166,18 @@ contract Jukebox {
     }
     
     function random() private view returns (uint) {
-        return uint(keccak256(block.difficulty, now, players));
+        return uint(keccak256(block.difficulty, currTime(), players));
+    }
+
+    function currTime() public view returns (uint) {
+        return fakeTime == 0 ? now : fakeTime;
+    }
+    // time mocking
+    function mockTime() public restricted {
+        fakeTime = now;
+    }
+
+    function sleep(uint timeInseconds) public restricted {
+        fakeTime += timeInseconds;
     }
 }
